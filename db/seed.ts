@@ -11,9 +11,9 @@ async function main() {
     const [organization] = await db
       .insert(organizations)
       .values({
-        name: "さくらクリニック",
+        name: "医療法人さくらクリニック",
         type: "診療所",
-        address: "東京都港区六本木1-2-3",
+        address: "東京都港区六本木1-2-3 さくらビル2F",
         phoneNumber: "03-1234-5678",
         directorName: "山田 太郎",
         licenseNumber: "1234567890",
@@ -99,6 +99,52 @@ async function main() {
       .returning()
 
     console.log("✅ 看護師ユーザーを作成しました:", nurseUser.email)
+
+    // コンプライアンス担当者を作成
+    const [complianceUser] = await db
+      .insert(users)
+      .values({
+        email: "compliance@clinic.jp",
+        name: "田中 次郎",
+        password: hashedPassword,
+        role: "COMPLIANCE_OFFICER",
+        department: "管理部",
+        position: "コンプライアンス担当",
+        phoneNumber: "090-4567-8901",
+        organizationId: organization.id,
+        twoFactorEnabled: false,
+        active: true,
+      })
+      .onConflictDoUpdate({
+        target: users.email,
+        set: { updatedAt: new Date() },
+      })
+      .returning()
+
+    console.log("✅ コンプライアンス担当者を作成しました:", complianceUser.email)
+
+    // 一般スタッフを作成
+    const [staffUser] = await db
+      .insert(users)
+      .values({
+        email: "staff@clinic.jp",
+        name: "高橋 優子",
+        password: hashedPassword,
+        role: "STAFF",
+        department: "受付",
+        position: "事務員",
+        phoneNumber: "090-5678-9012",
+        organizationId: organization.id,
+        twoFactorEnabled: false,
+        active: true,
+      })
+      .onConflictDoUpdate({
+        target: users.email,
+        set: { updatedAt: new Date() },
+      })
+      .returning()
+
+    console.log("✅ 一般スタッフを作成しました:", staffUser.email)
 
     // コンプライアンス項目を作成
     const complianceItems = [
@@ -221,9 +267,16 @@ async function main() {
 
     console.log("\n🎉 シードデータの投入が完了しました！")
     console.log("\n📝 ログイン情報:")
-    console.log("   管理者: admin@clinic.jp / password123")
-    console.log("   医師:   doctor@clinic.jp / password123")
-    console.log("   看護師: nurse@clinic.jp / password123")
+    console.log("   管理者:              admin@clinic.jp / password123")
+    console.log("   医師:                doctor@clinic.jp / password123")
+    console.log("   看護師:              nurse@clinic.jp / password123")
+    console.log("   コンプライアンス担当: compliance@clinic.jp / password123")
+    console.log("   一般スタッフ:         staff@clinic.jp / password123")
+    console.log("\n🔐 セキュリティ:")
+    console.log("   - 全てのアカウントにパスワード: password123")
+    console.log("   - 2段階認証は初期状態では無効（各自で設定してください）")
+    console.log("   - ログイン試行回数制限: 5回失敗で30分ロック")
+    console.log("   - セッションタイムアウト: 30分")
   } catch (error) {
     console.error("❌ エラーが発生しました:", error)
     throw error

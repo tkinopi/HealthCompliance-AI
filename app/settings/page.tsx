@@ -1,15 +1,41 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Settings, User, Lock, Bell, Building2 } from "lucide-react"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Settings, User, Lock, Bell, Building2, CheckCircle2, XCircle } from "lucide-react"
+import { TwoFactorSetup } from "@/components/auth/two-factor-setup"
 
 export default function SettingsPage() {
+  const { data: session } = useSession()
   const [isSaving, setIsSaving] = useState(false)
+  const [show2FADialog, setShow2FADialog] = useState(false)
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false)
+  const [isLoadingStatus, setIsLoadingStatus] = useState(true)
+
+  useEffect(() => {
+    // ユーザーの2FA状態を取得
+    const fetch2FAStatus = async () => {
+      try {
+        const response = await fetch("/api/auth/2fa/status")
+        if (response.ok) {
+          const data = await response.json()
+          setTwoFactorEnabled(data.enabled)
+        }
+      } catch (error) {
+        console.error("2FA状態の取得に失敗しました", error)
+      } finally {
+        setIsLoadingStatus(false)
+      }
+    }
+
+    fetch2FAStatus()
+  }, [])
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -17,6 +43,40 @@ export default function SettingsPage() {
     // 保存処理をシミュレート
     await new Promise((resolve) => setTimeout(resolve, 1000))
     setIsSaving(false)
+  }
+
+  const handleDisable2FA = async () => {
+    const password = prompt("2段階認証を無効にするには、パスワードを入力してください：")
+
+    if (!password) {
+      return
+    }
+
+    if (!confirm("2段階認証を無効にしますか？セキュリティが低下する可能性があります。")) {
+      return
+    }
+
+    try {
+      const response = await fetch("/api/auth/2fa/disable", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ password }),
+      })
+
+      const data = await response.json()
+
+      if (response.ok) {
+        setTwoFactorEnabled(false)
+        alert("2段階認証を無効にしました")
+      } else {
+        alert(data.error || "2段階認証の無効化に失敗しました")
+      }
+    } catch (error) {
+      console.error("2FA無効化エラー:", error)
+      alert("エラーが発生しました")
+    }
   }
 
   return (
@@ -269,15 +329,44 @@ export default function SettingsPage() {
               </form>
 
               <div className="border-t pt-6">
-                <h3 className="font-semibold text-gray-900 mb-2">
-                  2段階認証
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">
-                  セキュリティを強化するため、2段階認証の有効化を推奨します
-                </p>
-                <Button variant="outline" className="border-blue-600 text-blue-600 hover:bg-blue-50">
-                  2段階認証を設定
-                </Button>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-1 flex items-center gap-2">
+                      2段階認証
+                      {isLoadingStatus ? (
+                        <span className="text-xs text-gray-500">(読み込み中...)</span>
+                      ) : twoFactorEnabled ? (
+                        <CheckCircle2 className="h-5 w-5 text-green-600" />
+                      ) : (
+                        <XCircle className="h-5 w-5 text-gray-400" />
+                      )}
+                    </h3>
+                    <p className="text-sm text-gray-600">
+                      {twoFactorEnabled
+                        ? "2段階認証が有効になっています"
+                        : "セキュリティを強化するため、2段階認証の有効化を推奨します"}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    {twoFactorEnabled ? (
+                      <Button
+                        variant="outline"
+                        onClick={handleDisable2FA}
+                        className="border-red-600 text-red-600 hover:bg-red-50"
+                      >
+                        無効にする
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        onClick={() => setShow2FADialog(true)}
+                        className="border-blue-600 text-blue-600 hover:bg-blue-50"
+                      >
+                        2段階認証を設定
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -372,6 +461,18 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* 2段階認証設定ダイアログ */}
+      <Dialog open={show2FADialog} onOpenChange={setShow2FADialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <TwoFactorSetup
+            onSuccess={() => {
+              setTwoFactorEnabled(true)
+              setShow2FADialog(false)
+            }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
