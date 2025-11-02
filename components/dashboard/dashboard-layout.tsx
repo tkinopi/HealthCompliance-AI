@@ -15,6 +15,8 @@ import {
   Bell,
   Shield,
   Sparkles,
+  ShieldAlert,
+  AlertTriangle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AlertBanner } from "@/components/notifications/alert-banner"
@@ -32,6 +34,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     { name: "ダッシュボード", href: "/dashboard", icon: LayoutDashboard },
     { name: "通知センター", href: "/dashboard/notifications", icon: Bell },
     { name: "AI書類生成", href: "/dashboard/generate", icon: Sparkles },
+    { name: "インシデント管理", href: "/dashboard/incidents", icon: AlertTriangle },
+    { name: "セキュリティ監視", href: "/dashboard/security", icon: ShieldAlert },
     { name: "患者同意書", href: "/dashboard/consents", icon: FileCheck },
     { name: "タスク管理", href: "/dashboard/tasks", icon: FileText },
     { name: "設定", href: "/settings", icon: Settings },

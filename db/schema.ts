@@ -74,8 +74,34 @@ export const notificationCategoryEnum = [
 export type NotificationCategory = typeof notificationCategoryEnum[number]
 
 // 関連エンティティタイプ
-export const relatedEntityTypeEnum = ["PATIENT", "TASK", "USER", "CONSENT", "ACCESS_LOG"] as const
+export const relatedEntityTypeEnum = ["PATIENT", "TASK", "USER", "CONSENT", "ACCESS_LOG", "INCIDENT"] as const
 export type RelatedEntityType = typeof relatedEntityTypeEnum[number]
+
+// インシデントタイプ
+export const incidentTypeEnum = [
+  "INFORMATION_LEAK",    // 情報漏洩（患者情報の不適切な取り扱い）
+  "SYSTEM_FAILURE",      // システム障害（電子カルテアクセス不能等）
+  "CONSENT_DEFICIENCY",  // 同意書不備（未取得での処置等）
+  "MEDICAL_ERROR",       // 医療過誤
+  "INFECTION",           // 感染症
+  "EQUIPMENT_FAILURE",   // 機器故障
+  "OTHER",              // その他
+] as const
+export type IncidentType = typeof incidentTypeEnum[number]
+
+// インシデントステータス
+export const incidentStatusEnum = [
+  "REPORTED",      // 報告済み
+  "IN_PROGRESS",   // 対応中
+  "UNDER_REVIEW",  // 確認中
+  "RESOLVED",      // 解決済み
+  "CLOSED",        // 完了
+] as const
+export type IncidentStatus = typeof incidentStatusEnum[number]
+
+// インシデント深刻度
+export const incidentSeverityEnum = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const
+export type IncidentSeverity = typeof incidentSeverityEnum[number]
 
 // 医療機関（病院・クリニック）
 export const organizations = pgTable(
@@ -269,6 +295,9 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   documentTemplates: many(documentTemplates),
   submissionHistories: many(submissionHistories),
   notifications: many(notifications),
+  incidents: many(incidents),
+  accessLogs: many(accessLogs),
+  patientAssignments: many(patientAssignments),
 }))
 
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -285,6 +314,10 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   sessions: many(sessions),
   loginHistory: many(loginHistory),
   notifications: many(notifications),
+  incidentsReported: many(incidents),
+  incidentActionsPerformed: many(incidentActions),
+  accessLogs: many(accessLogs),
+  patientAssignments: many(patientAssignments),
 }))
 
 export const patientsRelations = relations(patients, ({ one, many }) => ({
@@ -294,6 +327,8 @@ export const patientsRelations = relations(patients, ({ one, many }) => ({
   }),
   records: many(patientRecords),
   consents: many(consents),
+  incidents: many(incidents),
+  patientAssignments: many(patientAssignments),
 }))
 
 export const patientRecordsRelations = relations(patientRecords, ({ one }) => ({
@@ -710,3 +745,217 @@ export const notificationsRelations = relations(notifications, ({ one }) => ({
 
 export type Notification = typeof notifications.$inferSelect
 export type NewNotification = typeof notifications.$inferInsert
+
+// アクセスログテーブル（患者情報アクセス異常検知用）
+export const accessLogs = pgTable(
+  "AccessLog",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    resourceType: text("resourceType").notNull(), // "PATIENT", "CONSENT", "RECORD"等
+    resourceId: text("resourceId").notNull(), // アクセスしたリソースのID
+    action: text("action").notNull(), // "VIEW", "CREATE", "UPDATE", "DELETE"
+    ipAddress: text("ipAddress"),
+    userAgent: text("userAgent"),
+    deviceInfo: text("deviceInfo"), // JSON: デバイス情報
+    accessDuration: integer("accessDuration"), // アクセス時間（秒）
+    dataSize: integer("dataSize"), // 取得したデータサイズ（バイト）
+    anomalyScore: integer("anomalyScore").default(0), // 異常度スコア（0-100）
+    isAnomaly: boolean("isAnomaly").notNull().default(false), // 異常フラグ
+    anomalyReasons: text("anomalyReasons"), // JSON: 異常理由のリスト
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+    organizationId: text("organizationId")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+  },
+  (table) => ({
+    userIdIdx: index("AccessLog_userId_idx").on(table.userId),
+    resourceTypeIdx: index("AccessLog_resourceType_idx").on(table.resourceType),
+    resourceIdIdx: index("AccessLog_resourceId_idx").on(table.resourceId),
+    createdAtIdx: index("AccessLog_createdAt_idx").on(table.createdAt),
+    isAnomalyIdx: index("AccessLog_isAnomaly_idx").on(table.isAnomaly),
+    organizationIdIdx: index("AccessLog_organizationId_idx").on(table.organizationId),
+  })
+)
+
+// Relations
+export const accessLogsRelations = relations(accessLogs, ({ one }) => ({
+  user: one(users, {
+    fields: [accessLogs.userId],
+    references: [users.id],
+  }),
+  organization: one(organizations, {
+    fields: [accessLogs.organizationId],
+    references: [organizations.id],
+  }),
+}))
+
+export type AccessLog = typeof accessLogs.$inferSelect
+export type NewAccessLog = typeof accessLogs.$inferInsert
+
+// 患者担当割り当てテーブル（異常検知で使用）
+export const patientAssignments = pgTable(
+  "PatientAssignment",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    patientId: text("patientId")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    assignedAt: timestamp("assignedAt", { mode: "date" }).notNull().defaultNow(),
+    unassignedAt: timestamp("unassignedAt", { mode: "date" }),
+    isActive: boolean("isActive").notNull().default(true),
+    organizationId: text("organizationId")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+  },
+  (table) => ({
+    patientIdIdx: index("PatientAssignment_patientId_idx").on(table.patientId),
+    userIdIdx: index("PatientAssignment_userId_idx").on(table.userId),
+    organizationIdIdx: index("PatientAssignment_organizationId_idx").on(table.organizationId),
+  })
+)
+
+// Relations
+export const patientAssignmentsRelations = relations(patientAssignments, ({ one }) => ({
+  patient: one(patients, {
+    fields: [patientAssignments.patientId],
+    references: [patients.id],
+  }),
+  user: one(users, {
+    fields: [patientAssignments.userId],
+    references: [users.id],
+  }),
+  organization: one(organizations, {
+    fields: [patientAssignments.organizationId],
+    references: [organizations.id],
+  }),
+}))
+
+export type PatientAssignment = typeof patientAssignments.$inferSelect
+export type NewPatientAssignment = typeof patientAssignments.$inferInsert
+
+// インシデント管理テーブル
+export const incidents = pgTable(
+  "Incident",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    incidentNumber: text("incidentNumber").notNull().unique(), // インシデント番号
+    incidentType: text("incidentType").notNull(), // IncidentType enum
+    title: text("title").notNull(), // インシデントタイトル
+    description: text("description").notNull(), // 詳細説明
+    severity: text("severity").notNull().default("MEDIUM"), // IncidentSeverity enum
+    status: text("status").notNull().default("REPORTED"), // IncidentStatus enum
+    occurredAt: timestamp("occurredAt", { mode: "date" }).notNull(), // 発生日時
+    discoveredAt: timestamp("discoveredAt", { mode: "date" }).notNull(), // 発見日時
+    location: text("location"), // 発生場所
+    affectedPatientId: text("affectedPatientId").references(() => patients.id), // 影響を受けた患者
+    reportedById: text("reportedById")
+      .notNull()
+      .references(() => users.id), // 報告者
+    assignedToId: text("assignedToId").references(() => users.id), // 担当者
+    rootCause: text("rootCause"), // 根本原因
+    immediateActions: text("immediateActions"), // 初動対応（JSON配列）
+    correctiveActions: text("correctiveActions"), // 是正措置（JSON配列）
+    preventiveMeasures: text("preventiveMeasures"), // 再発防止策（JSON配列）
+    similarIncidents: text("similarIncidents"), // JSON: 類似インシデントのID配列
+    aiSuggestions: text("aiSuggestions"), // JSON: AI提案の対応策
+    reportDocument: text("reportDocument"), // 報告書ドキュメント（URL or JSON）
+    evidenceUrls: text("evidenceUrls"), // JSON: エビデンスファイルのURL配列
+    requiresExternalReport: boolean("requiresExternalReport").notNull().default(false), // 外部報告要否
+    externalReportStatus: text("externalReportStatus"), // 外部報告ステータス
+    resolvedAt: timestamp("resolvedAt", { mode: "date" }), // 解決日時
+    closedAt: timestamp("closedAt", { mode: "date" }), // 完了日時
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
+    organizationId: text("organizationId")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+  },
+  (table) => ({
+    incidentNumberIdx: uniqueIndex("Incident_incidentNumber_idx").on(table.incidentNumber),
+    incidentTypeIdx: index("Incident_incidentType_idx").on(table.incidentType),
+    severityIdx: index("Incident_severity_idx").on(table.severity),
+    statusIdx: index("Incident_status_idx").on(table.status),
+    occurredAtIdx: index("Incident_occurredAt_idx").on(table.occurredAt),
+    reportedByIdIdx: index("Incident_reportedById_idx").on(table.reportedById),
+    assignedToIdIdx: index("Incident_assignedToId_idx").on(table.assignedToId),
+    organizationIdIdx: index("Incident_organizationId_idx").on(table.organizationId),
+  })
+)
+
+// インシデント対応アクション（タイムライン）
+export const incidentActions = pgTable(
+  "IncidentAction",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    incidentId: text("incidentId")
+      .notNull()
+      .references(() => incidents.id, { onDelete: "cascade" }),
+    actionType: text("actionType").notNull(), // "INITIAL_RESPONSE", "INVESTIGATION", "CORRECTION", "PREVENTION", "COMMENT"
+    title: text("title").notNull(), // アクションタイトル
+    description: text("description").notNull(), // アクション内容
+    performedById: text("performedById")
+      .notNull()
+      .references(() => users.id), // 実施者
+    performedAt: timestamp("performedAt", { mode: "date" }).notNull(), // 実施日時
+    isCompleted: boolean("isCompleted").notNull().default(false), // 完了フラグ
+    completedAt: timestamp("completedAt", { mode: "date" }), // 完了日時
+    evidenceUrls: text("evidenceUrls"), // JSON: エビデンスファイルのURL配列
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => ({
+    incidentIdIdx: index("IncidentAction_incidentId_idx").on(table.incidentId),
+    performedByIdIdx: index("IncidentAction_performedById_idx").on(table.performedById),
+    performedAtIdx: index("IncidentAction_performedAt_idx").on(table.performedAt),
+  })
+)
+
+// Relations
+export const incidentsRelations = relations(incidents, ({ one, many }) => ({
+  affectedPatient: one(patients, {
+    fields: [incidents.affectedPatientId],
+    references: [patients.id],
+  }),
+  reportedBy: one(users, {
+    fields: [incidents.reportedById],
+    references: [users.id],
+  }),
+  assignedTo: one(users, {
+    fields: [incidents.assignedToId],
+    references: [users.id],
+  }),
+  organization: one(organizations, {
+    fields: [incidents.organizationId],
+    references: [organizations.id],
+  }),
+  actions: many(incidentActions),
+}))
+
+export const incidentActionsRelations = relations(incidentActions, ({ one }) => ({
+  incident: one(incidents, {
+    fields: [incidentActions.incidentId],
+    references: [incidents.id],
+  }),
+  performedBy: one(users, {
+    fields: [incidentActions.performedById],
+    references: [users.id],
+  }),
+}))
+
+export type Incident = typeof incidents.$inferSelect
+export type NewIncident = typeof incidents.$inferInsert
+export type IncidentAction = typeof incidentActions.$inferSelect
+export type NewIncidentAction = typeof incidentActions.$inferInsert
